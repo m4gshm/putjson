@@ -83,11 +83,15 @@ func main() {
 
 	rootInput := *input
 	if len(rootInput) == 0 {
-		log.Fatal("input dir not defined")
+		log.Println("input dir not defined")
+		flag.Usage()
+		os.Exit(1)
 	}
 	rootOutput := *output
 	if len(rootOutput) == 0 {
-		log.Fatal("output dir not defined")
+		log.Println("output dir not defined")
+		flag.Usage()
+		os.Exit(1)
 	}
 
 	if err := os.MkdirAll(rootInput, os.ModePerm); err != nil {
@@ -118,14 +122,18 @@ func main() {
 		for position < len(content) {
 			visited := 0
 			for value, i := range tokens {
-				part := content[position : position+len(value)]
+				nextPosition := position + len(value)
+				if nextPosition > len(content) {
+					nextPosition = len(content)
+				}
+				part := content[position:nextPosition]
 				if part == value {
 					if i.isStart {
 						if startBlockPos != noStart {
 							log.Fatalf("detected start block but previos start is not closed, position %d in '%v'",
 								position, getPart(content, position))
 						}
-						startBlockPos = position + len(value)
+						startBlockPos = nextPosition
 					} else if i.isEnd {
 						if startBlockPos == noStart {
 							log.Fatalf("detected end block but without predefined start, position %d in '%v'",
