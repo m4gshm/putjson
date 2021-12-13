@@ -179,7 +179,7 @@ func main() {
 				if i > 0 {
 					write(outFile, ",\n")
 				}
-				write(outFile, fmt.Sprintf("%v\"block_%v\":\"%v\"", indent, i, b))
+				write(outFile, fmt.Sprintf("%v\"block_%v\": \"%v\"", indent, i, b))
 			}
 			write(outFile, "\n}\n")
 			_ = outFile.Sync()
