@@ -18,18 +18,11 @@ const (
 )
 
 var (
-	input     = flag.String("input", "", "input directory; must be set")
-	output    = flag.String("output", "", "output directory; must be set")
-	extension = flag.String("extensions", "", "comma delimited input filed extensions")
-	_start    = flag.String("startToken", "{{", "start block symbols")
-	_end      = flag.String("endToken", "}}", "end block symbols")
-)
-
-type token string
-
-const (
-	start token = "start"
-	end   token = "end"
+	input      = flag.String("input", "", "input directory; must be set")
+	output     = flag.String("output", "", "output directory; must be set")
+	extension  = flag.String("extensions", "", "comma delimited input filed extensions")
+	startToken = flag.String("startToken", "{{", "start block symbols")
+	endToken   = flag.String("endToken", "}}", "end block symbols")
 )
 
 func usage() {
@@ -46,10 +39,10 @@ func main() {
 	flag.Parse()
 
 	var (
-		startVal = *_start
-		endVal   = *_end
+		start = *startToken
+		end   = *endToken
 	)
-	if startVal == endVal {
+	if start == end {
 		log.Fatalf("start block %v must be different with end one %v", start, end)
 	}
 
@@ -77,8 +70,8 @@ func main() {
 	}
 
 	tokens := map[string]info{
-		startVal: {isStart: true},
-		endVal:   {isEnd: true},
+		start: {isStart: true},
+		end:   {isEnd: true},
 	}
 
 	rootInput := *input
