@@ -23,6 +23,7 @@ var (
 	extension  = flag.String("extensions", "", "comma delimited input filed extensions")
 	startToken = flag.String("startToken", "{{", "start block symbols")
 	endToken   = flag.String("endToken", "}}", "end block symbols")
+	verbose    = flag.Bool("v", false, "log verbose")
 )
 
 func usage() {
@@ -97,16 +98,19 @@ func main() {
 		} else if fileInfo.IsDir() {
 			return nil
 		} else if !isIncluded(filePath) {
-			log.Println("exclude by extension", filePath)
+			logVerbosef("%v ignored", filePath)
 			return nil
 		}
 
 		raw, err := ioutil.ReadFile(path.Clean(filePath))
 		if err != nil {
-			return fmt.Errorf("file %v: %w", filePath, err)
+			logErrorf("read file %v: %v", filePath, err)
+			return nil
 		}
 
 		blocks := make([]string, 0)
+
+		errors := 0
 
 		content := string(raw)
 		const noStart = -1
@@ -119,23 +123,26 @@ func main() {
 				if nextPosition > len(content) {
 					nextPosition = len(content)
 				}
-				part := content[position:nextPosition]
-				if part == value {
+				if part := content[position:nextPosition]; part == value {
 					if i.isStart {
 						if startBlockPos != noStart {
-							log.Fatalf("detected start block but previos start is not closed, position %d in '%v'",
+							errors++
+							logErrorf("detected start block but previos start is not closed, position %d in '%v'",
 								position, getPart(content, position))
 						}
 						startBlockPos = nextPosition
 					} else if i.isEnd {
 						if startBlockPos == noStart {
-							log.Fatalf("detected end block but without predefined start, position %d in '%v'",
+							errors++
+							logErrorf("detected end block but without predefined start, position %d in '%v'",
 								position, getPart(content, position))
+						} else {
+							blocks = append(blocks, content[startBlockPos:position])
 						}
-						blocks = append(blocks, content[startBlockPos:position])
 						startBlockPos = noStart
 					} else {
-						log.Fatalf("unexpected token %v at %d", value, position)
+						errors++
+						logErrorf("unexpected token %v at %d", value, position)
 					}
 					visited = len(value)
 					break
@@ -146,43 +153,49 @@ func main() {
 			position += visited
 		}
 
-		if len(blocks) > 0 {
-			var outFileName string
-			outFileName, err = filepath.Rel(rootInput, filePath)
-			if err != nil {
-				log.Fatalf("relative path comute error, root %v, target %v : %v", rootInput, filePath, err)
-			}
-
-			if err = os.MkdirAll(rootOutput, os.ModePerm); err != nil {
-				log.Fatalf("error of create output dir %v: %v", rootOutput, err)
-			}
-			ext := filepath.Ext(outFileName)
-			if len(ext) > 0 {
-				outFileName = outFileName[:len(outFileName)-len(ext)] + ".json"
-			}
+		if len(blocks) == 0 {
+			//do nothing
+		} else if outFileName, err := filepath.Rel(rootInput, filePath); err != nil {
+			logErrorf("relative path comute error, root %v, target %v : %v", rootInput, filePath, err)
+		} else if err := os.MkdirAll(rootOutput, os.ModePerm); err != nil {
+			logErrorf("create output dir %v: %v", rootOutput, err)
+		} else if ext := filepath.Ext(outFileName); len(ext) > 0 {
+			outFileName = outFileName[:len(outFileName)-len(ext)] + ".json"
 			outFilePath := filepath.Join(rootOutput, outFileName)
-			var outFile *os.File
-			outFile, err = os.Create(outFilePath)
-			if err != nil {
-				log.Fatalf("error of create output file %v: %v", outFilePath, err)
-			}
-			write(outFile, "{\n")
+			if outFile, err := os.Create(outFilePath); err != nil {
+				logErrorf("error of create output file %v: %v", outFilePath, err)
+			} else {
+				write(outFile, "{\n")
 
-			for i, b := range blocks {
-				if i > 0 {
-					write(outFile, ",\n")
+				for i, b := range blocks {
+					if i > 0 {
+						write(outFile, ",\n")
+					}
+					write(outFile, fmt.Sprintf("%v\"block_%v\": \"%v\"", indent, i, escape(b)))
 				}
-				write(outFile, fmt.Sprintf("%v\"block_%v\": \"%v\"", indent, i, b))
+				write(outFile, "\n}\n")
+				_ = outFile.Sync()
+				_ = outFile.Close()
+
+				log.Printf("input %v, output %v has %d blocks, %d errors detected\n", filePath, outFilePath, len(blocks), errors)
 			}
-			write(outFile, "\n}\n")
-			_ = outFile.Sync()
-			_ = outFile.Close()
 		}
 
 		return nil
 	}); err != nil {
 		log.Fatalf("walkDir %v: %v", rootInput, err)
 	}
+}
+
+func escape(in string) string {
+	out := in
+	out = strings.ReplaceAll(out, "\\", "\\\\")
+	out = strings.ReplaceAll(out, "\"", "\\\"")
+	out = strings.ReplaceAll(out, "\n", "\\\\n")
+	out = strings.ReplaceAll(out, "\t", "\\\\t")
+	out = strings.ReplaceAll(out, ",", "\\\\,")
+	return out
+
 }
 
 func write(file *os.File, content string) {
@@ -203,4 +216,14 @@ func getPart(content string, position int) string {
 	}
 	part := content[from:to]
 	return part
+}
+
+func logErrorf(format string, args ...interface{}) {
+	log.Printf("ERROR: "+format+"\n", args...)
+}
+
+func logVerbosef(format string, args ...interface{}) {
+	if *verbose {
+		log.Printf(format+"\n", args...)
+	}
 }
