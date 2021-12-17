@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -18,12 +19,14 @@ const (
 )
 
 var (
-	input      = flag.String("input", "", "input directory; must be set")
-	output     = flag.String("output", "", "output directory; must be set")
-	extension  = flag.String("extensions", "", "comma delimited input filed extensions")
-	startToken = flag.String("startToken", "{{", "start block symbols")
-	endToken   = flag.String("endToken", "}}", "end block symbols")
-	verbose    = flag.Bool("v", false, "log verbose")
+	input       = flag.String("input", "", "input directory; must be set")
+	output      = flag.String("output", "", "output directory; must be set")
+	fileMatcher = flag.String("fileMatcher", `\d+_(?P<language>[A-Za-z]{2})_[A-Za-z]{2}_.+.txt`,
+		"regular expression fo file name matching")
+	startToken   = flag.String("startToken", "{{", "start block symbols")
+	endToken     = flag.String("endToken", "}}", "end block symbols")
+	outDirSuffix = flag.String("outSuffix", "-out", "output subdirectory suffix")
+	verbose      = flag.Bool("v", false, "log verbose")
 )
 
 func usage() {
@@ -47,23 +50,41 @@ func main() {
 		log.Fatalf("start block %v must be different with end one %v", start, end)
 	}
 
-	extensions := map[string]bool{}
-	if extension != nil {
-		split := strings.Split(*extension, ",")
-		for _, ext := range split {
-			if len(ext) > 0 {
-				extensions["."+ext] = true
-			}
-		}
-	}
 	isIncluded := func(path string) bool {
 		return true
 	}
 
-	if len(extensions) > 0 {
-		isIncluded = func(file string) bool {
-			return extensions[path.Ext(file)]
+	if fileMatcher == nil || len(*fileMatcher) == 0 {
+		log.Fatalf("fileMatcher regexp must be defined")
+	}
+
+	expr := *fileMatcher
+	re, err := regexp.Compile(expr)
+	if err != nil {
+		log.Fatalf("invalid fileMatcher %v", expr)
+	}
+
+	suffix := ""
+	if outDirSuffix != nil {
+		suffix = *outDirSuffix
+	}
+
+	extractOutPath := func(file string) string {
+		dir := filepath.Dir(file)
+		fileName := filepath.Base(file)
+
+		submatches := re.FindAllStringSubmatch(fileName, -1)
+
+		out := file
+		for _, subMatch := range submatches {
+			for i, subExpName := range re.SubexpNames() {
+				if subExpName == "language" {
+					out = subMatch[i] + "/" + dir
+					break
+				}
+			}
 		}
+		return dir + suffix + "/" + out + ".json"
 	}
 
 	type info struct {
@@ -101,6 +122,13 @@ func main() {
 			logVerbosef("%v ignored", filePath)
 			return nil
 		}
+
+		rel, err := filepath.Rel(rootInput, filePath)
+		if err != nil {
+			logErrorf("relation file %v, base %v: %v", filePath, rootInput, err)
+			return nil
+		}
+		outFileName := extractOutPath(rel)
 
 		raw, err := ioutil.ReadFile(path.Clean(filePath))
 		if err != nil {
@@ -153,15 +181,15 @@ func main() {
 			position += visited
 		}
 
+		var (
+			outFilePath = filepath.Join(rootOutput, outFileName)
+			outFileDir  = filepath.Dir(outFilePath)
+		)
 		if len(blocks) == 0 {
 			//do nothing
-		} else if outFileName, err := filepath.Rel(rootInput, filePath); err != nil {
-			logErrorf("relative path comute error, root %v, target %v : %v", rootInput, filePath, err)
-		} else if err := os.MkdirAll(rootOutput, os.ModePerm); err != nil {
+		} else if err = os.MkdirAll(outFileDir, os.ModePerm); err != nil {
 			logErrorf("create output dir %v: %v", rootOutput, err)
-		} else if ext := filepath.Ext(outFileName); len(ext) > 0 {
-			outFileName = outFileName[:len(outFileName)-len(ext)] + ".json"
-			outFilePath := filepath.Join(rootOutput, outFileName)
+		} else {
 			if outFile, err := os.Create(outFilePath); err != nil {
 				logErrorf("error of create output file %v: %v", outFilePath, err)
 			} else {
@@ -171,7 +199,9 @@ func main() {
 					if i > 0 {
 						write(outFile, ",\n")
 					}
-					write(outFile, fmt.Sprintf("%v\"block_%v\": \"%v\"", indent, i, escape(b)))
+
+					blockName := fmt.Sprintf("block_%d", i)
+					write(outFile, fmt.Sprintf("%v\"%v\": \"%v\"", indent, blockName, processBlock(blockName, b)))
 				}
 				write(outFile, "\n}\n")
 				_ = outFile.Sync()
@@ -179,6 +209,7 @@ func main() {
 
 				log.Printf("input %v, output %v has %d blocks, %d errors detected\n", filePath, outFilePath, len(blocks), errors)
 			}
+
 		}
 
 		return nil
@@ -187,13 +218,29 @@ func main() {
 	}
 }
 
-func escape(in string) string {
-	out := in
+func processBlock(name, content string) string {
+	const tag = "@@"
+	const tagLen = len(tag)
+	out := ""
+	for blockIndex := 0; ; blockIndex++ {
+		boldPos := strings.Index(content, tag)
+		if boldPos < 0 {
+			break
+		}
+		nextPart := content[boldPos+tagLen:]
+		finishPos := strings.Index(nextPart, tag)
+		if finishPos > 0 {
+			tagContent := nextPart[0:finishPos]
+			out += content[0:boldPos] + fmt.Sprintf("<b class=\"%v_%d\">%v</b>", name, blockIndex, tagContent)
+			content = nextPart[finishPos+tagLen:]
+		}
+	}
+	out += content
+
 	out = strings.ReplaceAll(out, "\\", "\\\\")
 	out = strings.ReplaceAll(out, "\"", "\\\"")
 	out = strings.ReplaceAll(out, "\n", "\\\\n")
 	out = strings.ReplaceAll(out, "\t", "\\\\t")
-	out = strings.ReplaceAll(out, ",", "\\\\,")
 	return out
 
 }
