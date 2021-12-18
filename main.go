@@ -79,12 +79,15 @@ func main() {
 		for _, subMatch := range submatches {
 			for i, subExpName := range re.SubexpNames() {
 				if subExpName == "language" {
-					out = subMatch[i] + "/" + dir
+					out = filepath.Join(subMatch[i], dir)
 					break
 				}
 			}
 		}
-		return dir + suffix + "/" + out + ".json"
+		if len(dir) > 0 && dir != "." {
+			dir = dir + suffix
+		}
+		return filepath.Join(dir, out+".json")
 	}
 
 	type info struct {
