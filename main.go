@@ -73,21 +73,31 @@ func main() {
 		dir := filepath.Dir(file)
 		fileName := filepath.Base(file)
 
+		noOutDir := len(dir) == 0 || dir == "."
+		outFileName := dir
+		if noOutDir {
+			outFileName = filepath.Base(file)
+			ext := filepath.Ext(file)
+			if len(ext) > 0 {
+				outFileName = file[:len(file)-len(ext)]
+			}
+		}
 		submatches := re.FindAllStringSubmatch(fileName, -1)
 
-		out := file
+		outFilePath := file
 		for _, subMatch := range submatches {
 			for i, subExpName := range re.SubexpNames() {
 				if subExpName == "language" {
-					out = filepath.Join(subMatch[i], dir)
+					outFilePath = filepath.Join(subMatch[i], outFileName)
 					break
 				}
 			}
 		}
-		if len(dir) > 0 && dir != "." {
+
+		if !noOutDir {
 			dir = dir + suffix
 		}
-		return filepath.Join(dir, out+".json")
+		return filepath.Join(dir, outFilePath+".json")
 	}
 
 	type info struct {
