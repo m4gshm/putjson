@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -27,6 +28,7 @@ var (
 	endToken     = flag.String("endToken", "}}", "end block symbols")
 	outDirSuffix = flag.String("outSuffix", "-out", "output subdirectory suffix")
 	verbose      = flag.Bool("v", false, "log verbose")
+	langReplace  = flag.String("langReplace", "zh=ch,sv=se", "language code replacers pairs divided by comma; format: source1=replacer1,source2=replacer2")
 )
 
 func usage() {
@@ -64,6 +66,8 @@ func main() {
 		log.Fatalf("invalid fileMatcher %v", expr)
 	}
 
+	langReplacers := languageReplacers()
+
 	suffix := ""
 	if outDirSuffix != nil {
 		suffix = *outDirSuffix
@@ -88,7 +92,12 @@ func main() {
 		for _, subMatch := range submatches {
 			for i, subExpName := range re.SubexpNames() {
 				if subExpName == "language" {
-					outFilePath = filepath.Join(subMatch[i], outFileName)
+					lang := subMatch[i]
+					if replacer, ok := langReplacers[lang]; ok {
+						logVerbosef("replace lang %s by %s", lang, replacer)
+						lang = replacer
+					}
+					outFilePath = filepath.Join(lang, outFileName)
 					break
 				}
 			}
@@ -126,6 +135,8 @@ func main() {
 		log.Fatalf("error of create input dir %v: %v", rootInput, err)
 	}
 
+	inputDirStatistic := make(map[string]int)
+
 	if err := filepath.Walk(rootInput, func(filePath string, fileInfo fs.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -136,12 +147,14 @@ func main() {
 			return nil
 		}
 
-		rel, err := filepath.Rel(rootInput, filePath)
+		relativeFilePath, err := filepath.Rel(rootInput, filePath)
 		if err != nil {
 			logErrorf("relation file %v, base %v: %v", filePath, rootInput, err)
 			return nil
 		}
-		outFileName := extractOutPath(rel)
+
+		outFileName := extractOutPath(relativeFilePath)
+		inputDir := filepath.Dir(relativeFilePath)
 
 		raw, err := ioutil.ReadFile(path.Clean(filePath))
 		if err != nil {
@@ -168,7 +181,7 @@ func main() {
 					if i.isStart {
 						if startBlockPos != noStart {
 							errors++
-							logErrorf("detected start block but previos start is not closed, position %d in '%v'",
+							logErrorf("detected start block but previous start is not closed, position %d in '%v'",
 								position, getPart(content, position))
 						}
 						startBlockPos = nextPosition
@@ -208,21 +221,42 @@ func main() {
 			} else {
 				write(outFile, "{\n")
 
+				numberRank := 1
+				for rem := len(blocks) / 10; rem > 0; rem = rem / 10 {
+					numberRank++
+				}
+
 				for i, b := range blocks {
 					if i > 0 {
 						write(outFile, ",\n")
 					}
-
-					blockName := fmt.Sprintf("block_%d", i)
+					tmpl := "block_%0" + strconv.Itoa(numberRank) + "d"
+					blockName := fmt.Sprintf(tmpl, i)
 					write(outFile, fmt.Sprintf("%v\"%v\": \"%v\"", indent, blockName, processBlock(blockName, b)))
 				}
 				write(outFile, "\n}\n")
 				_ = outFile.Sync()
 				_ = outFile.Close()
 
-				log.Printf("input %v, output %v has %d blocks, %d errors detected\n", filePath, outFilePath, len(blocks), errors)
-			}
+				actual := len(blocks)
+				if errors > 0 {
+					logInfo("input %v, output %v has %d blocks, %d errors detected\n", filePath, outFilePath, actual, errors)
+				} else {
+					logVerbosef("input %v, output %v has %d blocks, %d errors detected\n", filePath, outFilePath, actual, errors)
+				}
+				if actual > 0 {
+					expected := inputDirStatistic[inputDir]
+					if expected == 0 {
+						inputDirStatistic[inputDir] = actual
+					} else if expected != actual {
+						logErrorf("blocks mismatched in %s, expected %d, actual %d", filePath, expected, actual)
+						if actual > expected {
+							inputDirStatistic[inputDir] = actual
+						}
+					}
+				}
 
+			}
 		}
 
 		return nil
@@ -286,4 +320,23 @@ func logVerbosef(format string, args ...interface{}) {
 	if *verbose {
 		log.Printf(format+"\n", args...)
 	}
+}
+
+func logInfo(format string, args ...interface{}) {
+	log.Printf(format+"\n", args...)
+}
+
+func languageReplacers() map[string]string {
+	result := make(map[string]string)
+	if langReplace == nil {
+		return nil
+	}
+	replacers := strings.Split(*langReplace, ",")
+	for _, r := range replacers {
+		pair := strings.Split(r, "=")
+		if len(pair) >= 2 {
+			result[pair[0]] = pair[1]
+		}
+	}
+	return result
 }
