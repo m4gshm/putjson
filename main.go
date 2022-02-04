@@ -39,6 +39,12 @@ func usage() {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err.Error())
+	}
+}
+
+func run() error {
 	log.SetPrefix(name + ": ")
 
 	flag.Usage = usage
@@ -49,7 +55,7 @@ func main() {
 		end   = *endToken
 	)
 	if start == end {
-		log.Fatalf("start block %v must be different with end one %v", start, end)
+		return fmt.Errorf("start block %v must be different with end one %v", start, end)
 	}
 
 	isIncluded := func(path string) bool {
@@ -57,13 +63,13 @@ func main() {
 	}
 
 	if fileMatcher == nil || len(*fileMatcher) == 0 {
-		log.Fatalf("fileMatcher regexp must be defined")
+		return fmt.Errorf("fileMatcher regexp must be defined")
 	}
 
 	expr := *fileMatcher
 	re, err := regexp.Compile(expr)
 	if err != nil {
-		log.Fatalf("invalid fileMatcher %v", expr)
+		return fmt.Errorf("invalid fileMatcher %v", expr)
 	}
 
 	langReplacers := languageReplacers()
@@ -132,7 +138,7 @@ func main() {
 	}
 
 	if err := os.MkdirAll(rootInput, os.ModePerm); err != nil {
-		log.Fatalf("error of create input dir %v: %v", rootInput, err)
+		return fmt.Errorf("error of create input dir %v: %v", rootInput, err)
 	}
 
 	inputDirStatistic := make(map[string]int)
@@ -219,7 +225,9 @@ func main() {
 			if outFile, err := os.Create(outFilePath); err != nil {
 				logErrorf("error of create output file %v: %v", outFilePath, err)
 			} else {
-				write(outFile, "{\n")
+				if err:= write(outFile, "{\n"); err != nil {
+					return err
+				}
 
 				numberRank := 1
 				for rem := len(blocks) / 10; rem > 0; rem = rem / 10 {
@@ -228,13 +236,19 @@ func main() {
 
 				for i, b := range blocks {
 					if i > 0 {
-						write(outFile, ",\n")
+						if err:= write(outFile, ",\n"); err != nil {
+							return err
+						}
 					}
 					tmpl := "block_%0" + strconv.Itoa(numberRank) + "d"
 					blockName := fmt.Sprintf(tmpl, i)
-					write(outFile, fmt.Sprintf("%v\"%v\": \"%v\"", indent, blockName, processBlock(blockName, b)))
+					if err := write(outFile, fmt.Sprintf("%v\"%v\": \"%v\"", indent, blockName, processBlock(blockName, b))); err != nil {
+						return err
+					}
 				}
-				write(outFile, "\n}\n")
+				if err := write(outFile, "\n}\n"); err != nil {
+					return err
+				}
 				_ = outFile.Sync()
 				_ = outFile.Close()
 
@@ -261,8 +275,9 @@ func main() {
 
 		return nil
 	}); err != nil {
-		log.Fatalf("walkDir %v: %v", rootInput, err)
+		return fmt.Errorf("walkDir %v: %v", rootInput, err)
 	}
+	return nil
 }
 
 func processBlock(name, content string) string {
@@ -292,10 +307,11 @@ func processBlock(name, content string) string {
 
 }
 
-func write(file *os.File, content string) {
+func write(file *os.File, content string) error {
 	if _, err := file.WriteString(content); err != nil {
-		log.Fatalf("error of write file %v: %v", file.Name(), err)
+		return fmt.Errorf("file %v: %w", file.Name(), err)
 	}
+	return nil
 }
 
 func getPart(content string, position int) string {
